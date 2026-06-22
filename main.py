@@ -142,30 +142,14 @@ def describe_dataframe(df: pd.DataFrame, path: str, shown_columns: int) -> str:
     return "\n".join(lines)
 
 
-def create_content(
-    selected_file_text: ft.Text,
-    content_body: ft.Column,
-    progress: ft.ProgressRing,
-    open_file_picker,
-):
+def create_content(pick_zone: ft.Container, content_body: ft.Column):
     return ft.Container(
         content=ft.Column(
             controls=[
-                ft.Row(
-                    controls=[
-                        ft.ElevatedButton(
-                            "Pick file",
-                            icon=ft.Icons.UPLOAD_FILE,
-                            on_click=open_file_picker,
-                        ),
-                        progress,
-                        selected_file_text,
-                    ],
-                    spacing=12,
-                ),
+                pick_zone,
                 content_body,
             ],
-            spacing=16,
+            spacing=8,
             expand=True,
         ),
         bgcolor=CONTENT_BG,
@@ -184,44 +168,86 @@ def main(page: ft.Page):
     page.padding = 20
     page.horizontal_alignment = ft.CrossAxisAlignment.STRETCH
 
-    selected_file_text = ft.Text("No file selected", color=ft.Colors.GREY_700)
+    selected_file_text = ft.Text("", color=ft.Colors.GREY_600, size=12)
     file_summary = ft.Text(
-        "Pick a CSV or Excel file to inspect columns, shape, and preview.",
         size=12,
         color=ft.Colors.GREY_800,
         selectable=True,
     )
-    progress = ft.ProgressRing(visible=False, width=20, height=20)
-    table_container = ft.Container(
-        content=ft.Text("Pick a file to preview data", color=ft.Colors.GREY_700),
-        expand=True,
-    )
+    progress = ft.ProgressRing(visible=False, width=28, height=28)
+    table_container = ft.Container(expand=True)
+    cancel_button = ft.OutlinedButton("Cancel")
+    save_button = ft.ElevatedButton("Save")
     content_body = ft.Column(
         controls=[
+            ft.Row(
+                controls=[
+                    ft.Column(
+                        controls=[
+                            ft.Text("File preview", weight=ft.FontWeight.BOLD),
+                            selected_file_text,
+                        ],
+                        spacing=4,
+                        expand=True,
+                    ),
+                    cancel_button,
+                    save_button,
+                ],
+                alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
+            ),
             file_summary,
             table_container,
         ],
         spacing=12,
         expand=True,
+        visible=False,
     )
 
-    def set_loading(loading: bool, message: str):
-        progress.visible = loading
-        selected_file_text.value = message
-        progress.update()
+    current_load = {"df": None, "path": None}
+
+    def reset_preview():
+        current_load["df"] = None
+        current_load["path"] = None
+        file_summary.value = ""
+        selected_file_text.value = ""
+        table_container.content = None
+        content_body.visible = False
+        file_summary.update()
         selected_file_text.update()
+        table_container.update()
+        content_body.update()
+
+    def on_cancel(e):
+        reset_preview()
+
+    def on_save(e):
+        if current_load["df"] is None:
+            return
+        print(f"Saved: {current_load['path']} ({current_load['df'].shape[0]} rows)")
+        page.snack_bar = ft.SnackBar(ft.Text("File import confirmed"))
+        page.snack_bar.open = True
+        page.update()
+
+    cancel_button.on_click = on_cancel
+    save_button.on_click = on_save
+
+    def set_loading(loading: bool):
+        progress.visible = loading
+        progress.update()
 
     def on_file_picker_result(e: ft.FilePickerResultEvent):
         if not e.files:
-            set_loading(False, "Cancelled")
+            set_loading(False)
             return
 
         file = e.files[0]
         path = file.path
-        set_loading(True, f"Loading {file.name}...")
+        set_loading(True)
 
         try:
             df = load_dataframe(path)
+            current_load["df"] = df
+            current_load["path"] = path
             max_cols = 6
             shown_columns = min(max_cols, df.shape[1])
             subset = df.head().iloc[:, :shown_columns]
@@ -233,18 +259,20 @@ def main(page: ft.Page):
                 scroll=ft.ScrollMode.AUTO,
                 expand=True,
             )
+            content_body.visible = True
             print(summary)
         except Exception as ex:
             file_summary.value = f"Failed to load file:\n{ex}"
             selected_file_text.value = "Load failed"
             table_container.content = ft.Text(f"Failed to load file:\n{ex}", color=ft.Colors.RED)
+            content_body.visible = True
             print(ex)
         finally:
-            progress.visible = False
-            progress.update()
+            set_loading(False)
             file_summary.update()
             selected_file_text.update()
             table_container.update()
+            content_body.update()
 
     file_picker = ft.FilePicker(on_result=on_file_picker_result)
     page.overlay.append(file_picker)
@@ -257,6 +285,31 @@ def main(page: ft.Page):
             allowed_extensions=["csv", "xlsx", "xls"],
         )
 
+    pick_zone = ft.Container(
+        content=ft.Column(
+            controls=[
+                ft.Icon(ft.Icons.UPLOAD_FILE, size=56, color=ft.Colors.BLUE_700),
+                ft.Text("Import spreadsheet", size=22, weight=ft.FontWeight.BOLD),
+                ft.Text(
+                    "CSV or Excel (.csv, .xlsx, .xls)",
+                    size=13,
+                    color=ft.Colors.GREY_600,
+                ),
+                ft.ElevatedButton(
+                    "Click to upload file",
+                    icon=ft.Icons.FOLDER_OPEN,
+                    height=44,
+                    on_click=open_file_picker,
+                ),
+                progress,
+            ],
+            horizontal_alignment=ft.CrossAxisAlignment.CENTER,
+            spacing=12,
+        ),
+        padding=ft.padding.only(bottom=16),
+        alignment=ft.alignment.top_center,
+    )
+
     page.controls = [
         ft.Container(
             content=ft.Row(
@@ -267,12 +320,7 @@ def main(page: ft.Page):
                         spacing=0,
                         controls=[
                             create_header(),
-                            create_content(
-                                selected_file_text,
-                                content_body,
-                                progress,
-                                open_file_picker,
-                            ),
+                            create_content(pick_zone, content_body),
                         ],
                     ),
                 ],
